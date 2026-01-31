@@ -1,0 +1,218 @@
+%% ============================================================
+%  LINE FOLLOWER ROBOT - COMPLETE MATLAB CONTROL ANALYSIS
+%  WITH SYSTEM IDENTIFICATION + PID DESIGN
+% ============================================================
+%clear;
+clc; close all;
+
+%% ============================================================
+%% REQUIREMENT 1 — use data 
+% Create iddata object
+Ts = 0.01;
+data_id = iddata(y, u, Ts); % u and y already saved
+
+
+%% ============================================================
+%% REQUIREMENT 2 — USE IDENTIFIED CONTINUOUS G(s) - SYSID
+%  Your derived transfer function:
+%     G(s) = 1.477e4 / (s^2 + 2519s + 4.488e5)
+% =============================================================
+disp('Identified continuous-time G(s) from System Identification Toolbox:');
+tf1
+
+%% ============================================================
+%% REQUIREMENT 3 — CONVERT G(s) TO G(z) USING ZOH AND TUSTIN
+% =============================================================
+Gz_ZOH = c2d(tf1, Ts, 'zoh');
+Gz_Tustin = c2d(tf1, Ts, 'tustin');
+
+disp('G(z) using ZOH:');
+Gz_ZOH
+disp('G(z) using Tustin:');
+Gz_Tustin
+
+figure; step(Gz_ZOH); hold on; step(Gz_Tustin);
+title('ZOH vs Tustin Effect (Open Loop)');
+legend('ZOH','Tustin');
+
+
+%% ============================================================
+%% REQUIREMENT 4 — OPEN-LOOP ROOT LOCUS
+% =============================================================
+figure;
+rlocus(Gz_ZOH);
+title('Open-Loop Root Locus of Plant G(z)');
+
+
+%% ============================================================
+%% REQUIREMENT 5 — PID TUNING USING MATLAB PID TUNER
+% =============================================================
+Gz = Gz_ZOH;   % Use ZOH model for PID design
+
+pidTuner(Gz);  % OPEN GUI -> Tune PID -> EXPORT "Cz"
+pause;         % wait for export
+
+if ~exist('Cz','var')
+    error('You MUST EXPORT Cz from PID Tuner!');
+end
+
+
+%% ============================================================
+%% REQUIREMENT 6 — PRINT PID GAINS
+% =============================================================
+Kp = Cz.Kp; Ki = Cz.Ki; Kd = Cz.Kd;
+
+disp('PID Gains Exported From PID Tuner:');
+disp(Cz)
+
+
+%% ============================================================
+%% REQUIREMENT 7 — PID CONTROLLER TRANSFER FUNCTION IN S-DOMAIN
+%  Classical: C(s) = Kp + Ki/s + Kd*s
+% =============================================================
+s = tf('s');
+C_s = Kp + Ki/s + Kd*s;
+
+disp('Continuous PID C(s):');
+C_s
+
+
+%% ============================================================
+%% REQUIREMENT 8 — PID CONTROLLER TRANSFER FUNCTION IN Z-DOMAIN
+% =============================================================
+if Cz.Ts == 0
+    Cz_d = c2d(C_s, Ts, 'tustin');  % convert continuous PID to discrete
+else
+    Cz_d = Cz;
+end
+
+disp('Discrete PID C(z):');
+Cz_d
+
+
+%% ============================================================
+%% REQUIREMENT 9 — CLOSED-LOOP TRANSFER FUNCTION IN S-DOMAIN
+% =============================================================
+CL_s = feedback(C_s * tf1, 1);
+disp('Closed-loop G_cl(s):');
+CL_s
+
+
+%% ============================================================
+%% REQUIREMENT 10 — CLOSED-LOOP TRANSFER FUNCTION IN Z-DOMAIN
+% =============================================================
+CL_z = feedback(Cz_d * Gz_ZOH, 1);
+disp('Closed-loop G_cl(z):');
+CL_z
+
+
+%% ============================================================
+%% REQUIREMENT 11 — STEADY-STATE ERROR BEFORE & AFTER PID
+% =============================================================
+[y_before, t_b] = step(Gz_ZOH);        % before PID
+[y_after_z, t_a] = step(CL_z);         % after PID
+
+% interpolate before-PID length to match after PID
+y_before_i = interp1(linspace(0,t_a(end),length(y_before)), y_before, t_a);
+
+SSE_before = abs(1 - y_before_i(end));
+SSE_after  = abs(1 - y_after_z(end));
+
+disp(['SSE Before PID: ', num2str(SSE_before)]);
+disp(['SSE After  PID: ', num2str(SSE_after)]);
+
+
+%% ============================================================
+%% REQUIREMENT 12 — TRANSIENT RESPONSE BEFORE & AFTER PID
+% =============================================================
+info_before = stepinfo(Gz_ZOH);
+info_after  = stepinfo(CL_z);
+
+disp('Transient Response BEFORE PID:');
+info_before
+disp('Transient Response AFTER PID:');
+info_after
+
+
+%% ============================================================
+%% REQUIREMENT 13 — STEP RESPONSE BEFORE & AFTER PID (Z-domain)
+% =============================================================
+figure;
+step(Gz_ZOH); hold on;
+step(CL_z);
+title('Step Response Before and After PID (Z-domain)');
+legend('Before PID','After PID');
+
+
+%% ============================================================
+%% REQUIREMENT 14 — ERROR SIGNAL PLOT
+% =============================================================
+error_before = 1 - y_before_i;
+error_after = 1 - y_after_z;
+
+figure;
+plot(t_a, error_before, '--', 'LineWidth', 1.5); hold on;
+plot(t_a, error_after, 'LineWidth', 2);
+title('Error Signal Before and After PID');
+xlabel('Time (s)'); ylabel('Error');
+legend('Before PID','After PID');
+grid on;
+
+
+%% ============================================================
+%% REQUIREMENT 15 — ZOH EFFECT BEFORE PID
+% =============================================================
+figure;
+step(Gz_ZOH); hold on; step(Gz_Tustin);
+title('Open-loop: Effect of ZOH vs Tustin');
+legend('ZOH','Tustin');
+
+
+%% ============================================================
+%% REQUIREMENT 16 — ZOH EFFECT AFTER PID
+% =============================================================
+CLz_ZOH = feedback(Cz_d * Gz_ZOH, 1);
+CLz_Tustin = feedback(Cz_d * Gz_Tustin, 1);
+
+figure;
+step(CLz_ZOH); hold on;
+step(CLz_Tustin);
+title('Closed-loop: ZOH + PID vs Tustin + PID');
+legend('ZOH+PID','Tustin+PID');
+
+
+%% ============================================================
+%% REQUIREMENT 17 — STABILITY ANALYSIS
+% =============================================================
+stable_flag = isstable(CL_z);
+
+disp(['Is closed-loop system stable?  ', num2str(stable_flag)]);
+disp('Closed-loop poles:');
+disp(pole(CL_z));
+
+
+%% ============================================================
+%% REQUIREMENT 18 — POLES & ZEROS OF CLOSED-LOOP SYSTEM
+% =============================================================
+figure;
+pzmap(CL_z);
+title('Pole-Zero Map of Closed-loop System');
+
+
+%% ============================================================
+%% REQUIREMENT 19 — ROOT LOCUS AFTER PID (Closed-loop RL)
+% =============================================================
+figure;
+rlocus(Cz_d * Gz_ZOH);
+title('Root Locus of L(z) = C(z)G(z) with PID');
+
+
+%% ============================================================
+%% REQUIREMENT 20 — COMMENT ON STABILITY
+% =============================================================
+if stable_flag
+    disp('The closed-loop system is STABLE: all poles lie inside the unit circle.');
+else
+    disp('The closed-loop system is UNSTABLE: some poles lie outside the unit circle.');
+end
+

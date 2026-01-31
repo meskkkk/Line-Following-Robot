@@ -1,0 +1,187 @@
+function lineFollowerRealtime
+    % -----------------------------------------------------------
+    % GUI + Real-time Arduino Serial Plot for Line Follower Robot
+    % -----------------------------------------------------------
+
+    % ===== Global Variables =====
+    global s isSim t error_history ax ...
+           set_slider kp_slider ki_slider kd_slider ...
+           e_label;
+
+    s = [];            % serial object
+    isSim = false;     % simulation toggle
+    t = 0;             % time
+    error_history = []; % history for plot
+
+    % ===== Create GUI =====
+    fig = uifigure('Name','Line Follower Real-Time','Position',[100 100 900 550]);
+    
+    % --- Setpoint ---
+    uilabel(fig,'Text','Setpoint:','Position',[30 490 100 20]);
+    set_slider = uieditfield(fig,'numeric','Value',30,'Position',[110 490 80 20]);
+
+    % --- Kp ---
+    uilabel(fig,'Text','Kp:','Position',[200 490 40 20]);
+    kp_slider = uislider(fig,'Limits',[0 50],'Value',5,'Position',[240 500 200 3]);
+
+    % --- Ki ---
+    uilabel(fig,'Text','Ki:','Position',[450 490 40 20]);
+    ki_slider = uislider(fig,'Limits',[0 50],'Value',4,'Position',[490 500 200 3]);
+
+    % --- Kd ---
+    uilabel(fig,'Text','Kd:','Position',[700 490 40 20]);
+    kd_slider = uislider(fig,'Limits',[0 50],'Value',5,'Position',[740 500 200 3]);
+
+    % Buttons
+    uibutton(fig,'Text','Connect','Position',[380 450 100 30],...
+        'ButtonPushedFcn',@(btn,event) connectToArduino());
+
+    uibutton(fig,'Text','Toggle Sim','Position',[500 450 100 30],...
+        'ButtonPushedFcn',@(btn,event) toggleSimulation());
+
+    % --- Error Display ---
+    e_label = uilabel(fig,'Text','Err(now): 0.0','Position',[650 450 200 30]);
+
+    % --- Axes for Plot ---
+    ax = uiaxes(fig,'Position',[50 50 800 380]);
+    title(ax,'Tracking Error (live)');
+    xlabel(ax,'Time (s)');
+    ylabel(ax,'Error');
+
+    % Start timer
+    realtimeTimer();
+end
+
+
+%% =========================================================
+%  CONNECT FUNCTION
+% =========================================================
+function connectToArduino
+    global s;
+
+    ports = serialportlist;
+    disp("Available ports:");
+    disp(ports);
+
+    try
+        % Change COM5 when you know your port
+        s = serialport("COM5",115200);
+        configureTerminator(s,"LF");
+        pause(1);
+
+        disp("Connected to Arduino");
+    catch
+        disp("⚠ Could not connect. Simulation mode still works.");
+    end
+end
+
+
+%% =========================================================
+%  SIM MODE TOGGLE
+% =========================================================
+function toggleSimulation
+    global isSim;
+    isSim = ~isSim;
+
+    if isSim
+        disp("Simulation ON");
+    else
+        disp("Simulation OFF");
+    end
+end
+
+
+%% =========================================================
+% REAL-TIME LOOP (Timer)
+% =========================================================
+function realtimeTimer
+    tmr = timer;
+    tmr.ExecutionMode = 'fixedSpacing';
+    tmr.Period = 0.05;       % 20 Hz
+    tmr.TimerFcn = @(~,~) updateLoop();
+    start(tmr);
+end
+
+
+%% =========================================================
+%  REAL-TIME UPDATE LOOP
+% =========================================================
+function updateLoop
+    global s isSim t error_history ax ...
+           set_slider kp_slider ki_slider kd_slider ...
+           e_label;
+
+    t = t + 0.05;
+
+    % ---- 1. READ ERROR ----
+    if isSim
+        % Fake error (for GUI testing without Arduino)
+        e = 0.5 * sin(t) + 0.1 * randn;
+    else
+        e = readArduinoError();
+    end
+    
+    error_history(end+1) = e;
+    set(e_label,'Text',sprintf("Err(now): %.4f",e));
+
+    % ---- 2. SEND CONTROL VALUES ----
+    sendPID();
+
+    % ---- 3. UPDATE PLOT ----
+    plot(ax, error_history, 'LineWidth', 2);
+
+    xmin = max(0, t - 20);  % show last 20 seconds
+    xmax = t;
+    ax.XLim = [xmin xmax];
+end
+
+
+
+%% =========================================================
+% READ FROM ARDUINO
+% =========================================================
+function e = readArduinoError
+    global s;
+
+    if isempty(s)
+        e = 0;
+        return;
+    end
+
+    if s.NumBytesAvailable > 0
+        try
+            value = readline(s);
+            e = str2double(value);
+            if isnan(e), e = 0; end
+        catch
+            e = 0;
+        end
+    else
+        e = 0;
+    end
+end
+
+
+%% =========================================================
+% SEND PID + SETPOINT TO ARDUINO
+% =========================================================
+function sendPID
+    global s set_slider kp_slider ki_slider kd_slider;
+
+    if isempty(s)
+        return;
+    end
+
+    setp = set_slider.Value;
+    kp = kp_slider.Value;
+    ki = ki_slider.Value;
+    kd = kd_slider.Value;
+
+    msg = sprintf("%.2f,%.2f,%.2f,%.2f\n", setp, kp, ki, kd);
+    
+    try
+        write(s, msg, "string");
+    catch
+        % ignore send errors
+    end
+end
